@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
-from src.preprocess import aplicar_mapeamentos
+from preprocess import aplicar_mapeamentos
 import warnings
 warnings.filterwarnings('ignore')
 
