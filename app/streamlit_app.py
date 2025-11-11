@@ -3,7 +3,9 @@ import pandas as pd
 import numpy as np
 import joblib
 import os
-from preprocess import aplicar_mapeamentos
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.preprocess import aplicar_mapeamentos
 import warnings
 warnings.filterwarnings('ignore')
 
