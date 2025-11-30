@@ -1,0 +1,465 @@
+import joblib
+import pandas as pd
+import os
+
+MODEL_PATH = os.path.join('models','model_pipeline.joblib')
+
+def load_model(path=MODEL_PATH):
+    return joblib.load(path)
+
+def predict_df(df, model=None):
+    if model is None:
+        model = load_model()
+        preds = model.predict(df)
+        probs = model.predict_proba(df)
+    return preds, probs
+
+if __name__ == '__main__':
+ # exemplo rápido
+    sample = pd.read_csv(os.path.join('data','Obesity.csv')).head(5).drop(columns=['Obesity'])
+    m = load_model()
+    p, pr = predict_df(sample, m)
+    print(p)
+
+
+
+import pandas as pd
+import numpy as np
+import warnings
+warnings.filterwarnings('ignore')
+
+# Colunas numéricas e categóricas
+NUM_COLS = ['Age', 'Height', 'Weight', 'BMI', 'CH2O', 'FCVC', 'NCP', 'FAF', 'TUE']
+CAT_COLS = ['Gender', 'family_history', 'FAVC', 'CAEC', 'SMOKE', 'SCC', 'CALC', 'MTRANS']
+
+# Dicionário de mapeamentos
+mapeamentos = {
+    # Binárias (Yes/No → 1/0)
+    'yes_no': {'yes': 1, 'no': 0},
+
+    # Frequência de consumo (CAEC, CALC)
+    'frequencia': {'no': 0, 'sometimes': 1, 'frequently': 2, 'always': 3},
+
+    # Meio de transporte
+    'mtrans': {
+        'automobile': 0,
+        'motorbike': 1,
+        'bike': 2,
+        'public_transportation': 3,
+        'walking': 4
+    },
+
+    # Classes alvo (Obesity)
+    'obesity': {
+        'insufficient_weight': 0,
+        'normal_weight': 1,
+        'overweight_level_i': 2,
+        'overweight_level_ii': 3,
+        'obesity_type_i': 4,
+        'obesity_type_ii': 5,
+        'obesity_type_iii': 6
+    },
+
+    # Gênero
+    'gender': {'female': 0, 'male': 1}
+}
+
+
+
+def aplicar_mapeamentos(df):
+    df = df.copy()
+
+    # Normaliza tudo em minúsculas
+    df = df.applymap(lambda x: x.lower().strip() if isinstance(x, str) else x)
+
+    # Mapeia colunas binárias
+    for col in ['family_history', 'favc', 'scc', 'smoke']:
+        if col in df.columns:
+            df[col] = df[col].map(mapeamentos['yes_no'])
+
+    # Mapeia frequência
+    for col in ['caec', 'calc']:
+        if col in df.columns:
+            df[col] = df[col].map(mapeamentos['frequencia'])
+
+    # Mapeia gênero
+    if 'gender' in df.columns:
+        df['gender'] = df['gender'].map(mapeamentos['gender'])
+
+    # Mapeia meio de transporte
+    if 'mtrans' in df.columns:
+        df['mtrans'] = df['mtrans'].map(mapeamentos['mtrans'])
+
+    # Mapeia obesidade (target)
+    if 'obesity' in df.columns:
+        df['obesity'] = df['obesity'].map(mapeamentos['obesity'])
+
+    return df
+
+
+
+def load_data(path):
+    df = pd.read_csv(path)
+
+    # 🔹 Normaliza os nomes das colunas para minúsculas
+    df.columns = df.columns.str.strip().str.lower()
+
+    # 🔹 Cria BMI se não existir
+    if 'bmi' not in df.columns and {'weight', 'height'}.issubset(df.columns):
+        df['bmi'] = df['weight'] / (df['height'] ** 2)
+
+    return df
+
+
+
+def basic_cleaning(df):
+    df = df.drop_duplicates().copy()
+
+    # Preenche numéricos com mediana
+    for c in df.select_dtypes(include=[np.number]).columns:
+        df[c] = df[c].fillna(df[c].median())
+
+    # Preenche categóricos com moda
+    for c in df.select_dtypes(include=['object', 'category']).columns:
+        df[c] = df[c].fillna(df[c].mode().iloc[0])
+
+    return df
+
+
+
+import os
+import joblib
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, StratifiedKFold, RandomizedSearchCV, cross_val_score
+from sklearn.metrics import accuracy_score, classification_report, roc_curve, auc
+from xgboost import XGBClassifier
+import matplotlib.pyplot as plt
+from preprocess import load_data, basic_cleaning, aplicar_mapeamentos
+from sklearn.preprocessing import label_binarize
+import warnings
+warnings.filterwarnings('ignore')
+
+# Caminhos e diretórios
+DATA_PATH = os.path.join('data', 'Obesity.csv')
+MODEL_DIR = 'models'
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+# Carregamento e pré-processamento
+df = load_data(DATA_PATH)
+df = basic_cleaning(df)
+df = aplicar_mapeamentos(df)
+
+# Padroniza os nomes das colunas (compatível com o app)
+df.columns = df.columns.str.lower().str.strip()
+
+# Detecta a coluna de alvo (Obesity ou obesity)
+target_col = next((c for c in df.columns if c.lower() == 'obesity'), None)
+if target_col is None:
+    raise KeyError("Coluna alvo 'Obesity' não encontrada no dataset!")
+
+# Separa features e target
+X = df.drop(columns=[target_col])
+y = df[target_col]
+
+# Split de treino e teste
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, stratify=y, random_state=42
+)
+
+# Modelo base - XGBoost
+xgb = XGBClassifier(
+    objective='multi:softprob',
+    eval_metric='mlogloss',
+    random_state=42,
+    n_jobs=-1
+)
+
+# Busca de hiperparâmetros
+param_dist = {
+    'n_estimators': [100, 200, 400],
+    'max_depth': [3, 6, 10],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'subsample': [0.7, 0.9, 1.0],
+    'colsample_bytree': [0.7, 0.9, 1.0]
+}
+
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+search = RandomizedSearchCV(
+    xgb,
+    param_distributions=param_dist,
+    n_iter=10,
+    cv=cv,
+    scoring='accuracy',
+    n_jobs=-1,
+    random_state=42
+)
+
+# Treinamento
+print("Treinando modelo XGBoost...")
+search.fit(X_train, y_train)
+
+# Resultados do CV
+print(f"\nMelhor score CV: {search.best_score_:.2f}")
+print(f"Melhores parâmetros: {search.best_params_}")
+
+# Melhor modelo
+best_model = search.best_estimator_
+
+
+# Avaliação no conjunto de teste
+
+y_pred = best_model.predict(X_test)
+acc = accuracy_score(y_test, y_pred)
+
+print(f"\nAcurácia no conjunto de teste: {acc:.2f}")
+print("\nClassification Report:\n", classification_report(y_test, y_pred))
+
+# Validação cruzada final
+
+scores = cross_val_score(best_model, X, y, cv=5, scoring='accuracy')
+print(f"\nCross-val mean: {scores.mean():.2f} | std: {scores.std():.2f}")
+
+# Curva ROC Multiclasse
+classes = np.unique(y)
+y_test_bin = label_binarize(y_test, classes=classes)
+y_score = best_model.predict_proba(X_test)
+
+plt.figure(figsize=(8, 6))
+for i, class_name in enumerate(classes):
+    fpr, tpr, _ = roc_curve(y_test_bin[:, i], y_score[:, i])
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, label=f'Classe {class_name} (AUC = {roc_auc:.2f})')
+
+plt.plot([0, 1], [0, 1], 'k--')
+plt.xlabel('Falsos Positivos (FPR)')
+plt.ylabel('Verdadeiros Positivos (TPR)')
+plt.title('Curva ROC - Multi-Classe (XGBoost)')
+plt.legend()
+plt.tight_layout()
+
+roc_path = os.path.join(MODEL_DIR, 'roc_curve_xgb.png')
+plt.savefig(roc_path)
+print(f"\nCurva ROC salva em: {roc_path}")
+
+model_path = os.path.join(MODEL_DIR, 'model_pipeline.joblib')
+joblib.dump({'model': best_model, 'columns': list(X.columns)}, model_path)
+print(f"\nModelo XGBoost salvo em: {model_path}")
+
+
+
+import streamlit as st
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
+import joblib
+import os
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.preprocess import aplicar_mapeamentos
+import warnings
+warnings.filterwarnings('ignore')
+
+# Cria as abas
+aba1, aba2 = st.tabs(["🏋️‍♂️ Previsor de Obesidade", "📊 Painel Analítico"])
+
+# ===================== ABA 1 - MODELO PREDITIVO =====================
+with aba1:
+    # Caminhos e cache
+    MODEL_PATH = os.path.join('models', 'model_pipeline.joblib')
+
+    @st.cache_resource
+    def load_model():
+        loaded = joblib.load(MODEL_PATH)
+        if isinstance(loaded, dict):
+            return loaded.get('model', loaded), loaded.get('columns', None)
+        return loaded, None
+
+    # Configurações de página
+    st.set_page_config(page_title="Previsor de Obesidade", page_icon="🏋️‍♂️", layout="centered")
+
+    st.title("🏋️‍♂️ Previsor de Obesidade - Tech Challenge 4")
+    st.write("""
+    Este aplicativo utiliza um modelo de **Machine Learning (XGBoost)** para prever o nível de obesidade 
+    com base em características individuais e hábitos alimentares.
+    """)
+
+    # Entradas do usuário
+    with st.expander("Inserir dados do indivíduo", expanded=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            Gender = st.selectbox('Gender', ['male', 'female'])
+            Age = st.number_input('Age', 1, 120, 30)
+            Height = st.number_input('Height (m)', 1.0, 2.5, 1.70)
+            Weight = st.number_input('Weight (kg)', 20.0, 300.0, 70.0)
+            family_history = st.selectbox('Family History (histórico familiar de obesidade)', ['yes', 'no'])
+            FAVC = st.selectbox('FAVC (consumo de fast-food)', ['yes', 'no'])
+            FCVC = st.number_input('FCVC (freq. consumo de vegetais)', 1, 5, 3)
+            NCP = st.number_input('NCP (número de refeições por dia)', 1, 5, 3)
+
+        with col2:
+            CH2O = st.number_input('CH2O (litros de água/dia)', 0.0, 10.0, 2.0)
+            SCC = st.selectbox('SCC (consome refrigerante?)', ['yes', 'no'])
+            FAF = st.number_input('FAF (freq. atividade física)', 0, 5, 2)
+            TUE = st.number_input('TUE (tempo em telas - horas/dia)', 0, 24, 2)
+            SMOKE = st.selectbox('SMOKE (fuma?)', ['yes', 'no'])
+            CAEC = st.selectbox('CAEC (álcool)', ['no', 'sometimes', 'frequently', 'always'])
+            CALC = st.selectbox('CALC (consumo calórico extra)', ['no', 'sometimes', 'frequently', 'always'])
+            MTRANS = st.selectbox('MTRANS (meio de transporte)', ['automobile', 'motorbike', 'bike', 'public_transportation', 'walking'])
+
+        # Montagem do DataFrame
+        row = pd.DataFrame([{
+            'Gender': Gender,
+            'Age': Age,
+            'Height': Height,
+            'Weight': Weight,
+            'family_history': family_history,
+            'FAVC': FAVC,
+            'FCVC': FCVC,
+            'NCP': NCP,
+            'CH2O': CH2O,
+            'SCC': SCC,
+            'FAF': FAF,
+            'TUE': TUE,
+            'SMOKE': SMOKE,
+            'CAEC': CAEC,
+            'CALC': CALC,
+            'MTRANS': MTRANS
+        }])
+
+        # Calcula BMI
+        row['BMI'] = row['Weight'] / (row['Height'] ** 2)
+        st.metric(label="Índice de Massa Corporal (BMI)", value=f"{row['BMI'].iloc[0]:.2f}")
+
+        # Aplica o mesmo mapeamento do treino
+        row_mapped = aplicar_mapeamentos(row)
+
+        # Converte para numérico e preenche nulos
+        for c in row_mapped.columns:
+            if row_mapped[c].dtype == 'object':
+                row_mapped[c] = pd.to_numeric(row_mapped[c], errors='coerce')
+        row_mapped = row_mapped.fillna(0)
+
+        # Botão de previsão
+        if not os.path.exists(MODEL_PATH):
+            st.error("Modelo não encontrado. Rode o script `src/train.py` para gerar `model_pipeline.joblib`.")
+        else:
+            model, model_columns = load_model()
+
+            if st.button("Gerar Previsão"):
+                try:
+                    # Normaliza nomes e ordem das colunas
+                    row_mapped.columns = row_mapped.columns.str.lower().str.strip()
+                    expected_cols = model_columns if model_columns else model.get_booster().feature_names
+                    row_mapped = row_mapped.reindex(columns=expected_cols, fill_value=0)
+
+                    # Predição
+                    pred_num = model.predict(row_mapped)[0]
+                    probs = model.predict_proba(row_mapped)[0]
+
+                    # Classes
+                    classes = [
+                        'Insufficient_Weight',
+                        'Normal_Weight',
+                        'Overweight_Level_I',
+                        'Overweight_Level_II',
+                        'Obesity_Type_I',
+                        'Obesity_Type_II',
+                        'Obesity_Type_III'
+                    ]
+                    pred_label = classes[int(pred_num)]
+
+                    # Probabilidades
+                    prob_df = pd.DataFrame({
+                        'class': classes,
+                        'probabilidade': probs
+                    }).sort_values('probabilidade', ascending=False)
+
+                    # Exibição
+                    st.success(f"Classificação prevista: **{pred_label.replace('_', ' ')}**")
+                    st.bar_chart(prob_df.set_index('class'))
+                    st.dataframe(prob_df)
+
+                    st.markdown(f"""
+                    ### Interpretação:
+                    O modelo previu que o indivíduo está classificado como **{pred_label.replace('_', ' ')}**, 
+                    com base nas informações fornecidas sobre hábitos e perfil físico.
+                    """)
+
+                except Exception as e:
+                    st.error(f"Erro ao gerar previsão: {e}")
+                    st.info("Verifique se as colunas e tipos de dados estão compatíveis com o modelo treinado.")
+            else:
+                st.info("Preencha os dados acima e clique em **Gerar Previsão** para ver o resultado.")
+            pass
+
+
+# ===================== ABA 2 - PAINEL ANALÍTICO =====================
+with aba2:
+    st.title("📊 Painel Analítico - Insights sobre Obesidade")
+    st.write("""
+    Este painel apresenta uma análise exploratória dos dados de obesidade, 
+    destacando os principais padrões e fatores associados ao ganho de peso.
+    """)
+    
+    # Carrega o dataset
+    df = pd.read_csv("data/Obesity.csv")
+    df = aplicar_mapeamentos(df)
+
+    # Cria o BMI se não existir
+    if 'BMI' not in df.columns and 'Weight' in df.columns and 'Height' in df.columns:
+        df['BMI'] = df['Weight'] / (df['Height'] ** 2)
+
+    # Renomeia coluna alvo, caso necessário
+    if 'obesity' not in df.columns:
+        target_col = next((c for c in df.columns if c.lower() == 'obesity'), None)
+        if target_col:
+            df.rename(columns={target_col: 'obesity'}, inplace=True)
+
+    st.subheader("1️⃣ Distribuição dos Níveis de Obesidade")
+    fig, ax = plt.subplots()
+    sns.countplot(x='obesity', data=df, palette='coolwarm', ax=ax)
+    ax.set_xlabel("Nível de Obesidade")
+    ax.set_ylabel("Quantidade de Pessoas")
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
+
+    st.subheader("2️⃣ Relação entre Idade e IMC")
+    fig, ax = plt.subplots()
+    sns.scatterplot(x='Age', y='BMI', hue='obesity', data=df, palette='Spectral', ax=ax)
+    ax.set_title("Dispersão de Idade x BMI por Classe de Obesidade")
+    st.pyplot(fig)
+
+    st.subheader("3️⃣ Influência da Atividade Física (FAF) na Obesidade")
+    fig, ax = plt.subplots()
+    sns.boxplot(x='obesity', y='FAF', data=df, palette='coolwarm', ax=ax)
+    ax.set_title("Distribuição de Atividade Física por Classe de Obesidade")
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
+
+    st.subheader("4️⃣ Correlação entre Hidratação (CH2O) e IMC")
+    fig, ax = plt.subplots()
+    sns.regplot(x='CH2O', y='BMI', data=df, scatter_kws={'alpha':0.4}, line_kws={'color':'red'}, ax=ax)
+    ax.set_title("Correlação entre Consumo de Água e Índice de Massa Corporal (BMI)")
+    st.pyplot(fig)
+
+    st.subheader("5️⃣ Hábitos Alimentares e Obesidade (FAVC)")
+    fig, ax = plt.subplots()
+    sns.countplot(x='FAVC', hue='obesity', data=df, palette='Set2', ax=ax)
+    ax.set_xlabel("Consumo Frequente de Fast-Food (FAVC)")
+    ax.set_ylabel("Contagem de Pessoas")
+    plt.legend(title="Nível de Obesidade", bbox_to_anchor=(1,1))
+    st.pyplot(fig)
+
+    st.markdown("""
+    ---
+    ### 💡 Principais Insights:
+    - O **IMC (BMI)** aumenta progressivamente com a idade, especialmente após os 30 anos.
+    - Pessoas com **baixo nível de atividade física (FAF)** concentram-se nas classes de obesidade tipo I e II.
+    - Um **maior consumo de água (CH2O)** tende a estar associado a um IMC mais equilibrado.
+    - O consumo frequente de **fast-food (FAVC = yes)** apresenta forte correlação com sobrepeso e obesidade tipo I.
+    - Há um claro padrão entre **histórico familiar de obesidade** e risco aumentado nas classes mais elevadas.
+    """)
