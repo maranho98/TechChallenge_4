@@ -28,10 +28,6 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
-# Colunas numéricas e categóricas
-NUM_COLS = ['Age', 'Height', 'Weight', 'BMI', 'CH2O', 'FCVC', 'NCP', 'FAF', 'TUE']
-CAT_COLS = ['Gender', 'family_history', 'FAVC', 'CAEC', 'SMOKE', 'SCC', 'CALC', 'MTRANS']
-
 # Dicionário de mapeamentos
 mapeamentos = {
     # Binárias (Yes/No → 1/0)
@@ -64,6 +60,32 @@ mapeamentos = {
     'gender': {'female': 0, 'male': 1}
 }
 
+
+def load_data(path):
+    df = pd.read_csv(path)
+
+    # 🔹 Normaliza os nomes das colunas para minúsculas
+    df.columns = df.columns.str.strip().str.lower()
+
+    # 🔹 Cria BMI se não existir
+    if 'bmi' not in df.columns and {'weight', 'height'}.issubset(df.columns):
+        df['bmi'] = df['weight'] / (df['height'] ** 2)
+
+    return df
+
+
+def basic_cleaning(df):
+    df = df.drop_duplicates().copy()
+
+    # Preenche numéricos com mediana
+    for c in df.select_dtypes(include=[np.number]).columns:
+        df[c] = df[c].fillna(df[c].median())
+
+    # Preenche categóricos com moda
+    for c in df.select_dtypes(include=['object', 'category']).columns:
+        df[c] = df[c].fillna(df[c].mode().iloc[0])
+
+    return df
 
 
 def aplicar_mapeamentos(df):
@@ -98,36 +120,7 @@ def aplicar_mapeamentos(df):
 
 
 
-def load_data(path):
-    df = pd.read_csv(path)
-
-    # 🔹 Normaliza os nomes das colunas para minúsculas
-    df.columns = df.columns.str.strip().str.lower()
-
-    # 🔹 Cria BMI se não existir
-    if 'bmi' not in df.columns and {'weight', 'height'}.issubset(df.columns):
-        df['bmi'] = df['weight'] / (df['height'] ** 2)
-
-    return df
-
-
-
-def basic_cleaning(df):
-    df = df.drop_duplicates().copy()
-
-    # Preenche numéricos com mediana
-    for c in df.select_dtypes(include=[np.number]).columns:
-        df[c] = df[c].fillna(df[c].median())
-
-    # Preenche categóricos com moda
-    for c in df.select_dtypes(include=['object', 'category']).columns:
-        df[c] = df[c].fillna(df[c].mode().iloc[0])
-
-    return df
-
-
-
-import os
+    import os
 import joblib
 import pandas as pd
 import numpy as np
@@ -162,10 +155,12 @@ if target_col is None:
 X = df.drop(columns=[target_col])
 y = df[target_col]
 
+
 # Split de treino e teste
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, stratify=y, random_state=42
 )
+
 
 # Modelo base - XGBoost
 xgb = XGBClassifier(
@@ -175,7 +170,8 @@ xgb = XGBClassifier(
     n_jobs=-1
 )
 
-# Busca de hiperparâmetros
+
+# Busca do melhor hiperparâmetro
 param_dist = {
     'n_estimators': [100, 200, 400],
     'max_depth': [3, 6, 10],
@@ -195,6 +191,7 @@ search = RandomizedSearchCV(
     n_jobs=-1,
     random_state=42
 )
+
 
 # Treinamento
 print("Treinando modelo XGBoost...")
@@ -216,10 +213,12 @@ acc = accuracy_score(y_test, y_pred)
 print(f"\nAcurácia no conjunto de teste: {acc:.2f}")
 print("\nClassification Report:\n", classification_report(y_test, y_pred))
 
+
 # Validação cruzada final
 
 scores = cross_val_score(best_model, X, y, cv=5, scoring='accuracy')
 print(f"\nCross-val mean: {scores.mean():.2f} | std: {scores.std():.2f}")
+
 
 # Curva ROC Multiclasse
 classes = np.unique(y)
@@ -242,6 +241,7 @@ plt.tight_layout()
 roc_path = os.path.join(MODEL_DIR, 'roc_curve_xgb.png')
 plt.savefig(roc_path)
 print(f"\nCurva ROC salva em: {roc_path}")
+
 
 model_path = os.path.join(MODEL_DIR, 'model_pipeline.joblib')
 joblib.dump({'model': best_model, 'columns': list(X.columns)}, model_path)
