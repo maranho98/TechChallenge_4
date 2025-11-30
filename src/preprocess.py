@@ -3,10 +3,6 @@ import numpy as np
 import warnings
 warnings.filterwarnings('ignore')
 
-# Colunas numéricas e categóricas
-NUM_COLS = ['Age', 'Height', 'Weight', 'BMI', 'CH2O', 'FCVC', 'NCP', 'FAF', 'TUE']
-CAT_COLS = ['Gender', 'family_history', 'FAVC', 'CAEC', 'SMOKE', 'SCC', 'CALC', 'MTRANS']
-
 # Dicionário de mapeamentos
 mapeamentos = {
     # Binárias (Yes/No → 1/0)
@@ -40,6 +36,33 @@ mapeamentos = {
 }
 
 
+def load_data(path):
+    df = pd.read_csv(path)
+
+    # 🔹 Normaliza os nomes das colunas para minúsculas
+    df.columns = df.columns.str.strip().str.lower()
+
+    # 🔹 Cria BMI se não existir
+    if 'bmi' not in df.columns and {'weight', 'height'}.issubset(df.columns):
+        df['bmi'] = df['weight'] / (df['height'] ** 2)
+
+    return df
+
+
+def basic_cleaning(df):
+    df = df.drop_duplicates().copy()
+
+    # Preenche numéricos com mediana
+    for c in df.select_dtypes(include=[np.number]).columns:
+        df[c] = df[c].fillna(df[c].median())
+
+    # Preenche categóricos com moda
+    for c in df.select_dtypes(include=['object', 'category']).columns:
+        df[c] = df[c].fillna(df[c].mode().iloc[0])
+
+    return df
+
+
 def aplicar_mapeamentos(df):
     df = df.copy()
 
@@ -67,32 +90,5 @@ def aplicar_mapeamentos(df):
     # Mapeia obesidade (target)
     if 'obesity' in df.columns:
         df['obesity'] = df['obesity'].map(mapeamentos['obesity'])
-
-    return df
-
-
-def load_data(path):
-    df = pd.read_csv(path)
-
-    # 🔹 Normaliza os nomes das colunas para minúsculas
-    df.columns = df.columns.str.strip().str.lower()
-
-    # 🔹 Cria BMI se não existir
-    if 'bmi' not in df.columns and {'weight', 'height'}.issubset(df.columns):
-        df['bmi'] = df['weight'] / (df['height'] ** 2)
-
-    return df
-
-
-def basic_cleaning(df):
-    df = df.drop_duplicates().copy()
-
-    # Preenche numéricos com mediana
-    for c in df.select_dtypes(include=[np.number]).columns:
-        df[c] = df[c].fillna(df[c].median())
-
-    # Preenche categóricos com moda
-    for c in df.select_dtypes(include=['object', 'category']).columns:
-        df[c] = df[c].fillna(df[c].mode().iloc[0])
 
     return df
