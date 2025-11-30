@@ -49,7 +49,7 @@ xgb = XGBClassifier(
 )
 
 
-# Busca de hiperparâmetros
+# Busca do melhor hiperparâmetro
 param_dist = {
     'n_estimators': [100, 200, 400],
     'max_depth': [3, 6, 10],
