@@ -66,11 +66,11 @@ Utilizamos métricas de desempenho e validação cruzada para garantir estabilid
 Melhores parâmetros encontrados:
 
 {
- 'subsample': 0.7,
- 'n_estimators': 400,
- 'max_depth': 6,
- 'learning_rate': 0.2,
- 'colsample_bytree': 0.9
+'subsample': 0.7,
+'n_estimators': 400,
+'max_depth': 6,
+'learning_rate': 0.2,
+'colsample_bytree': 0.9
 }
 
 
@@ -162,4 +162,5 @@ Com acurácia de 99% e curva ROC próxima da perfeição, o sistema demonstra al
 A arquitetura modular, os mapeamentos consistentes e a validação rigorosa tornam este projeto replicável, escalável e pronto para produção real.
 
 LINK PARA O MODELO EM PRODUÇÃO VIA STREAMLIT: https://tc4grupo31.streamlit.app/
+
 LINK PARA O REPOSITÓRIO NO GITHUB: https://github.com/maranho98/TechChallenge_4
